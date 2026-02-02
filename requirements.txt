@@ -3,3 +3,4 @@ click-shell
 requests
 python-dotenv
 psutil
+watchdog
