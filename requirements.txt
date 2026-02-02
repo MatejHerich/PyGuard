@@ -1,0 +1,5 @@
+click
+click-shell
+requests
+python-dotenv
+psutil
