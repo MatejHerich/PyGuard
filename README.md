@@ -1,321 +1,218 @@
-# PyGuard – Python Security & Antivirus Mentor
+# PyGuard
 
-PyGuard je konzolová aplikácia v Pythone, ktorá umožňuje skenovať súbory a priečinky podľa SHA-256 hashu a porovnávať ich s verejnou databázou malvérov **MalwareBazaar** (abuse.ch). Podozrivé súbory môžeš presunúť do karantény, ukončiť ich procesy a neskôr karanténu vymazať.
+Jednoduchý antivírusový nástroj napísaný v Pythone. Celý zmysel aplikácie je v tom, že keď máš nejaký súbor a nevieš či je bezpečný, tak ho môžeš "oskenovat" - PyGuard z neho vypočíta unikátny odtlačok (hash) a pozrie sa do verejnej databázy známych vírusov, či tam náhodou nie je. Ak áno, vieš že máš problém.
 
----
+## Čo to vlastne robí?
 
-## Obsah
+Každý súbor na počítači sa dá "zhašovať" - teda vypočítať z neho unikátny reťazec znakov (niečo ako odtlačok prsta). Dva rovnaké súbory majú vždy rovnaký hash. Existujú verejné databázy (napríklad MalwareBazaar od abuse.ch), kde sú uložené hashe známych vírusov a malvérov. 
 
-1. [Inštalácia a spustenie](#inštalácia-a-spustenie)
-2. [Konfigurácia](#konfigurácia)
-3. [Prehľad príkazov](#prehľad-príkazov)
-4. [Popis kódu](#popis-kódu)
-5. [Bezpečnostné poznámky](#bezpečnostné-poznámky)
+PyGuard jednoducho:
+1. Zoberie tvoj súbor
+2. Vypočíta jeho SHA-256 hash
+3. Pošle tento hash do databázy MalwareBazaar
+4. Povie ti, či tam bol nájdený alebo nie
 
----
+Ak bol nájdený = ten súbor je pravdepodobne škodlivý a mal by si ho dať do karantény alebo zmazať.
 
-## Inštalácia a spustenie
+## Ako to nainštalovať
 
-### Požiadavky
+Potrebuješ Python 3. Potom v priečinku projektu spusti:
 
-- Python 3.x
-- Závislosti z `requirements.txt`
-
-### Inštalácia závislostí
-
-Ak `pip` nie je v PATH, použite:
-
-```bash
+```
 python -m pip install -r requirements.txt
 ```
 
-### Spustenie
+Ešte potrebuješ API kľúč z MalwareBazaar - je zadarmo, stačí sa zaregistrovať na https://auth.abuse.ch/ a kľúč si skopírovať. Potom vytvor súbor `.env` v priečinku projektu a daj tam:
 
-```bash
+```
+ABUSE_CH_API_KEY=tvoj_kluc_sem
+```
+
+## Ako to spustiť
+
+```
 python main.py
 ```
 
-Zobrazí sa uvítacia obrazovka a shell s výzvou `PyGuard > `. Odtiaľ voláš príkazy.
+Uvidíš farebné logo a prompt `PyGuard > `. Odtiaľ zadávaš príkazy.
 
----
+## Príkazy
 
-## Konfigurácia
+| Príkaz | Čo robí |
+|--------|---------|
+| `scanf subor.exe` | Oskenuje jeden súbor |
+| `scand C:\Downloads` | Oskenuje celý priečinok (aj podpriečinky) |
+| `scand C:\Downloads --no-recursive` | Oskenuje len daný priečinok bez podpriečinkov |
+| `quarantine subor.exe` | Zabije procesy súboru a presunie ho do karantény |
+| `quarantine-list` | Ukáže čo je v karanténe |
+| `quarantine-clear` | Vymaže všetko z karantény (spýta sa na potvrdenie) |
 
-- **API kľúč MalwareBazaar:** Ulož ho do súboru `.env` v koreni projektu (súbor sa necommitne do gitu). Voľný kľúč získáš na [https://auth.abuse.ch/](https://auth.abuse.ch/).
-- **Karanténa:** Predvolene je priečinok `PyGuard_Quarantine` vedľa `main.py`. Cestu môžeš prepísať v `.env` premennou `QUARANTINE_PATH`.
+## Ako funguje kód - vysvetlenie
 
-Príklad `.env`:
+### Načítanie knižníc a konfigurácie
 
-```
-ABUSE_CH_API_KEY=tvoj_api_kluc
-QUARANTINE_PATH=C:\MojaKarantena
-```
-
----
-
-## Prehľad príkazov
-
-| Príkaz | Popis |
-|--------|--------|
-| `scanf <cesta_k_súboru>` | Skenuje jeden súbor (SHA-256 vs. MalwareBazaar). |
-| `scand <cesta_k_priečinku>` | Skenuje celý priečinok (predvolene rekurzívne). Možnosti: `--no-recursive` = len súbory v danom priečinku. |
-| `quarantine <cesta_k_súboru>` | Ukončí procesy súboru a presunie ho do karantény. |
-| `quarantine-list` | Zobrazí zoznam súborov v karanténe. |
-| `quarantine-clear` | Trvalo vymaže všetky súbory v karanténe (s potvrdením). |
-
----
-
-## Popis kódu
-
-Nasleduje podrobný popis štruktúry programu a jednotlivých častí kódu.
-
----
-
-### 1. Importy a úvodná konfigurácia
-
-Program používa knižnice na prácu s príkazovým riadkom (`click`, `click_shell`), súbormi a hashovaním (`hashlib`, `os`, `shutil`, `stat`), sieťovými požiadavkami (`requests`), procesmi (`psutil`) a načítaním premenných z `.env` (`python-dotenv`).
+Na začiatku importujeme všetko čo potrebujeme:
 
 ```python
-import click
-import click_shell as shell
-import os
-import hashlib
-import shutil
-import stat
-import time
-import requests
-import psutil
-from dotenv import load_dotenv
-
-load_dotenv()  # načíta ABUSE_CH_API_KEY z .env (súbor nie je v gite)
+import click              # na tvorbu príkazov v termináli
+import click_shell        # robí z toho interaktívny shell
+import os                 # práca so súbormi a priečinkami
+import hashlib            # výpočet SHA-256 hashu
+import shutil             # presúvanie súborov
+import stat               # zmena oprávnení súborov
+import time               # práca s časom
+import requests           # HTTP požiadavky na API
+import psutil             # práca s procesmi (na zabitie procesov)
+from dotenv import load_dotenv  # načítanie .env súboru
 ```
 
-`load_dotenv()` načíta premenné z `.env` do `os.environ`, takže `ABUSE_CH_API_KEY` a voliteľne `QUARANTINE_PATH` sú k dispozícii v celom programe.
+Hneď po importoch zavoláme `load_dotenv()` - to načíta premenné zo súboru `.env` do prostredia. Vďaka tomu nemusíme API kľúč písať priamo do kódu (čo by bolo nebezpečné ak by si kód zdieľal).
 
-Karanténa má predvolenú cestu: priečinok `PyGuard_Quarantine` v tom istom adresári, kde leží `main.py`:
+### Farebné logo
+
+Funkcia `get_welcome_screen()` generuje to farebné ASCII logo čo vidíš pri spustení. Používame `click.style()` na farbenie textu:
 
 ```python
-_QUARANTINE_DEFAULT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "PyGuard_Quarantine")
+def get_welcome_screen():
+    logo_lines = [
+        r"  _____ __     _______ _    _         _____  _____  ",
+        r" |  __ \\ \   / / ____| |  | |  /\   |  __ \|  __ \ ",
+        # ... ďalšie riadky loga
+    ]
+    lines = []
+    for line in logo_lines:
+        lines.append(click.style(line, fg='cyan'))  # cyan farba pre logo
+    # ... zelený nadpis, žltý status
+    return "\n".join(lines)
 ```
 
----
+Tie `r"..."` pred reťazcami znamenajú "raw string" - backslashe sa berú doslova a netreba ich zdvojovať. To je dôležité pre ASCII art kde je veľa lomítok.
 
-### 2. Výpočet SHA-256 hashu súboru
+### Výpočet SHA-256 hashu
 
-Funkcia `calculate_sha256(filepath)` prečíta súbor po blokoch (4096 bajtov), aktualizuje SHA-256 hash a vráti jeho hexadecimálny reťazec. Pri chybe (napr. súbor neexistuje alebo nemáš oprávnenia) vráti `None` a vypíše chybovú hlášku.
+Toto je srdce celej aplikácie. Funkcia `calculate_sha256()` zoberie súbor a vypočíta jeho hash:
 
 ```python
 def calculate_sha256(filepath):
-    sha256_hash = hashlib.sha256()
-    try:
-        with open(filepath, "rb") as f:
-            for byte_block in iter(lambda: f.read(4096), b""):
-                sha256_hash.update(byte_block)
-        return sha256_hash.hexdigest()
-    except Exception as e:
-        click.echo(f"❌ Chyba pri výpočte SHA-256: {e}")
-        return None
+    sha256_hash = hashlib.sha256()  # vytvoríme hashovací objekt
+    with open(filepath, "rb") as f:  # otvoríme súbor v binárnom režime
+        for byte_block in iter(lambda: f.read(4096), b""):  # čítame po 4KB kusoch
+            sha256_hash.update(byte_block)  # pridáme kus do hashu
+    return sha256_hash.hexdigest()  # vrátime hash ako text
 ```
 
-Čítanie po blokoch je dôležité pre veľké súbory, aby sa nezaťažovala pamäť.
+Prečo čítame po 4KB a nie celý súbor naraz? Keby si mal 10GB súbor a načítal ho celý do pamäte, počítač by sa zasekol. Takto to funguje aj pre obrovské súbory.
 
----
+### Kontrola v databáze MalwareBazaar
 
-### 3. Kontrola hashu v MalwareBazaar
-
-Funkcia `check_hash_malwarebazaar(sha256_hash)` odošle SHA-256 hash na API MalwareBazaar (abuse.ch). Ak nie je nastavený `ABUSE_CH_API_KEY`, vypíše upozornenie a vráti `None`. Ak API vráti záznamy o malvéroch, vráti zoznam záznamov; ak hash v databáze nie je, vráti prázdny zoznam `[]`.
+Keď máme hash, pošleme ho do databázy:
 
 ```python
 def check_hash_malwarebazaar(sha256_hash):
-    api_key = os.environ.get("ABUSE_CH_API_KEY")
-    if not api_key:
-        click.echo("⚠️  Pre kontrolu proti MalwareBazaar nastav premennú ABUSE_CH_API_KEY")
-        return None
-
+    api_key = os.environ.get("ABUSE_CH_API_KEY")  # získame kľúč z prostredia
+    
     url = "https://mb-api.abuse.ch/api/v1/"
     headers = {"Auth-Key": api_key}
     data = {"query": "get_info", "hash": sha256_hash}
-
-    try:
-        resp = requests.post(url, headers=headers, data=data, timeout=15)
-        resp.raise_for_status()
-        j = resp.json()
-        if j.get("query_status") == "ok" and j.get("data"):
-            return j["data"]
-        return []
-    except requests.RequestException as e:
-        click.echo(f"❌ Chyba API MalwareBazaar: {e}")
-        return None
+    
+    resp = requests.post(url, headers=headers, data=data, timeout=15)
+    j = resp.json()
+    
+    if j.get("query_status") == "ok" and j.get("data"):
+        return j["data"]  # hash bol nájdený - vrátime info o malvéri
+    return []  # hash nebol nájdený - súbor je čistý
 ```
 
-Význam návratových hodnôt:
+Je to obyčajná POST požiadavka. API vráti JSON s informáciami. Ak je `query_status` "ok" a sú nejaké dáta, znamená to že hash bol v databáze nájdený = súbor je známy malvér.
 
-- `None` = chýba kľúč alebo sieťová/API chyba
-- `[]` = hash nie je v databáze (súbor nie je známy malvér)
-- neprázdny zoznam = hash bol nájdený v databáze (súbor je považovaný za malvér)
+### Karanténa
 
----
-
-### 4. Karanténa – získanie priečinka
-
-Funkcia `get_quarantine_dir()` vráti cestu ku karanténnemu priečinku. Ak je v `.env` nastavená `QUARANTINE_PATH`, použije sa tá; inak predvolená `PyGuard_Quarantine`. Priečinok sa vytvorí, ak ešte neexistuje.
+Karanténa je priečinok kam presúvame podozrivé súbory. Predvolene je to `PyGuard_Quarantine` vedľa `main.py`:
 
 ```python
-def get_quarantine_dir():
-    path = os.environ.get("QUARANTINE_PATH", _QUARANTINE_DEFAULT)
-    os.makedirs(path, exist_ok=True)
-    return path
+_QUARANTINE_DEFAULT = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), 
+    "PyGuard_Quarantine"
+)
 ```
 
----
+Toto `os.path.dirname(os.path.abspath(__file__))` jednoducho znamená "priečinok kde leží tento Python súbor".
 
-### 5. Ukončenie procesov súboru
+### Zabíjanie procesov
 
-Funkcia `kill_processes_using_file(filepath)` prechádza všetky bežiace procesy (vďaka `psutil.process_iter()`), porovná cestu k ich spustiteľnému súboru (`proc.info.get("exe")`) s absolútnou cestou k nášmu súboru. Ak sa zhodujú, proces ukončí (`proc.kill()`). Na niektoré procesy môže byť potrebné spustiť PyGuard ako správca.
+Pred presunom do karantény chceme zabiť procesy ktoré ten súbor používajú (napríklad ak je to bežiaci vírus). Na to používame `psutil`:
 
 ```python
 def kill_processes_using_file(filepath):
     abs_path = os.path.abspath(filepath)
-    killed = 0
-    try:
-        for proc in psutil.process_iter(["pid", "exe", "name"]):
-            try:
-                exe = proc.info.get("exe")
-                if exe and os.path.normpath(exe) == os.path.normpath(abs_path):
-                    proc.kill()
-                    killed += 1
-                    click.echo(f"   Ukončený proces PID {proc.info['pid']}")
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                continue
-    except Exception as e:
-        click.echo(f"⚠️  Chyba pri ukončovaní procesov: {e}")
-    return killed
+    for proc in psutil.process_iter(["pid", "exe", "name"]):
+        exe = proc.info.get("exe")  # cesta k exe súboru procesu
+        if exe and os.path.normpath(exe) == os.path.normpath(abs_path):
+            proc.kill()  # zabiť proces
 ```
 
----
+`psutil.process_iter()` prejde všetky bežiace procesy. Pre každý pozrieme či jeho exe súbor je ten čo hľadáme. Ak áno, zabijeme ho.
 
-### 6. Presun súboru do karantény
-
-Funkcia `move_to_quarantine(filepath)`:
-
-1. Skontroluje, či je `filepath` skutočne súbor.
-2. Zavolá `kill_processes_using_file()` a krátko počkať (`time.sleep(0.5)`), aby sa procesy stihli ukončiť.
-3. Vytvorí jedinečné meno súboru v karanténe: `pôvodné_meno_časť_času.rozšírenie.quarantined` (čas v sekundách zabráni prepisovaniu).
-4. Presunie súbor pomocou `shutil.move()`.
-5. Nastaví súbor na len na čítanie (`os.chmod(..., S_IRUSR | S_IRGRP | S_IROTH)`), čo na niektorých systémoch pomáha obmedziť spustenie. Na Windows môže `chmod` zlyhať, preto je v `try/except` a chyba sa ignoruje.
+### Presun do karantény
 
 ```python
-unique = f"{name}_{int(time.time())}{ext}.quarantined"
-dest = os.path.join(qdir, unique)
-shutil.move(abs_path, dest)
-try:
+def move_to_quarantine(filepath):
+    # Najprv zabijeme procesy
+    kill_processes_using_file(filepath)
+    time.sleep(0.5)  # chvíľu počkáme nech sa procesy stihnú ukončiť
+    
+    # Vytvoríme unikátne meno (aby sa súbory neprepisovali)
+    unique = f"{name}_{int(time.time())}{ext}.quarantined"
+    dest = os.path.join(qdir, unique)
+    
+    # Presunieme súbor
+    shutil.move(abs_path, dest)
+    
+    # Nastavíme len na čítanie (sťažíme náhodné spustenie)
     os.chmod(dest, stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
-except OSError:
-    pass
 ```
 
----
+Ten `int(time.time())` pridá aktuálny čas v sekundách do názvu súboru. Takže ak dáš do karantény `virus.exe` dvakrát, budeš mať `virus_1738500000.exe.quarantined` a `virus_1738500005.exe.quarantined`.
 
-### 7. Shell a príkaz `scanf`
+### Click shell - interaktívne príkazy
 
-Aplikácia používa **click_shell**: po spustení `python main.py` vstúpiš do interaktívneho shellu s výzvou `PyGuard > `. Jednotlivé príkazy sú registrované cez `@cli.command()`.
+Celá aplikácia beží ako interaktívny shell vďaka `click_shell`:
 
-Príkaz `scanf`:
+```python
+@shell.shell(prompt='PyGuard > ', intro='')
+def cli():
+    pass  # telo je prázdne, je to len vstupný bod
+```
 
-- Prijme jeden argument: cestu k súboru (`click.Path(exists=True)`).
-- Vypočíta SHA-256 cez `calculate_sha256()`.
-- Odošle hash do MalwareBazaar cez `check_hash_malwarebazaar()`.
-- Podľa odpovede vypíše, či bol súbor nájdený v databáze malvérov, prípadne tagy (napr. trojan, ransomware).
+Jednotlivé príkazy registrujeme cez `@cli.command()`:
 
 ```python
 @cli.command()
 @click.argument('filepath', type=click.Path(exists=True))
 def scanf(filepath):
-    sha256 = calculate_sha256(filepath)
-    if sha256 is None:
-        return
-    result = check_hash_malwarebazaar(sha256)
-    if result:
-        click.echo("🚨 VÝSTRAHA: Hash bol nájdený v databáze malvérov (MalwareBazaar)!")
-        # ... výpis tagov
-    else:
-        click.echo("✅ Hash nebol nájdený v databáze MalwareBazaar ...")
+    # ... kód príkazu
 ```
 
----
+Ten `click.Path(exists=True)` automaticky skontroluje či súbor existuje. Ak nie, click vypíše chybu a príkaz sa nespustí.
 
-### 8. Príkaz `scand` (skenovanie priečinka)
+### Progress bar
 
-Príkaz `scand` prijíma cestu k **priečinku** (`file_okay=False`, `dir_okay=True`). Voliteľné prepínače:
-
-- `--recursive` / `-r` (predvolene zapnuté): skenuje aj všetky podpriečinky.
-- `--no-recursive`: skenuje len súbory priamo v danom priečinku.
-
-Postup:
-
-1. Zozbiera všetky súbory v priečinku (prípadne rekurzívne cez `os.walk()`). Symbolické odkazy sa preskakujú.
-2. Pre každý súbor vypočíta SHA-256 a odošle ho do MalwareBazaar.
-3. Pri nájdení hrozby vypíše cestu, SHA-256 a tag.
-4. Na konci vypíše zhrnutie: počet skenovaných súborov a počet nájdených hrozieb.
+Pri skenovaní priečinka zobrazujeme progress bar aby si videl koľko to ešte potrvá:
 
 ```python
-if recursive:
-    for root, _dirs, files in os.walk(dirpath):
-        for name in files:
-            path = os.path.join(root, name)
-            if os.path.isfile(path) and not os.path.islink(path):
-                files_to_scan.append(path)
-else:
-    for name in os.listdir(dirpath):
-        path = os.path.join(dirpath, name)
-        if os.path.isfile(path) and not os.path.islink(path):
-            files_to_scan.append(path)
+with click.progressbar(files_to_scan, label='Skenovanie', show_pos=True, show_percent=True) as bar:
+    for path in bar:
+        # ... spracovanie súboru
 ```
 
----
+`click.progressbar()` je super jednoduchý spôsob ako pridať progress bar. Automaticky ukazuje koľko položiek je spracovaných a percentá.
 
-### 9. Príkaz `quarantine`
+## Bezpečnostné veci
 
-Príkaz `quarantine <filepath>` len zavolá `move_to_quarantine(filepath)`, ktorá ukončí procesy a presunie súbor do karantény, ako je popísané vyššie.
+- **`.env` súbor** - nikdy ho nedávaj na GitHub ani nikam verejne. Obsahuje tvoj API kľúč. Preto je v `.gitignore`.
+- **Administrátorské práva** - niekedy potrebuješ spustiť PyGuard ako správca, hlavne ak chceš zabiť systémové procesy.
+- **Karanténa nie je dokonalá** - súbory sú len presunuté, nie šifrované ani zničené. Na úplné odstránenie použi `quarantine-clear`.
 
----
+## Zhrnutie
 
-### 10. Príkaz `quarantine-list`
-
-Prečíta obsah karanténneho priečinka (`get_quarantine_dir()`), zobrazí len položky, ktoré sú súbory (nie podpriečinky), a vypíše ich zoradené podľa mena.
-
----
-
-### 11. Príkaz `quarantine-clear`
-
-S potvrdením (`@click.confirmation_option`) vymaže všetky súbory v karanténe: najprv zmení oprávnenia na zapisovateľné (`os.chmod(path, stat.S_IWUSR)`), potom súbor vymaže (`os.remove(path)`). Bez zmeny oprávnení by sa súbory nastavené na len na čítanie nedali vymazať.
-
-```python
-for path in entries:
-    try:
-        os.chmod(path, stat.S_IWUSR)
-        os.remove(path)
-        click.echo(f"   Vymazané: {os.path.basename(path)}")
-    except OSError as e:
-        click.echo(f"   ❌ {os.path.basename(path)}: {e}")
-```
-
----
-
-## Bezpečnostné poznámky
-
-- Súbor **`.env`** obsahuje API kľúč a nemal by sa nikdy commitovať do gitu (je v `.gitignore`). Nikdy ho neposielaj verejne.
-- Karanténa **nešifruje** súbory; sú len presunuté a označené ako nebezpečné. Ak potrebuješ trvalé zničenie, použite `quarantine-clear` až keď si istý.
-- Na ukončenie niektorých systémových alebo chránených procesov môže byť potrebné spustiť PyGuard **ako správca** (Run as administrator).
-
----
-
-## Zhrnutie toku programu
-
-1. **Spustenie** → `load_dotenv()` načíta `.env` → zobrazí sa shell.
-2. **scanf / scand** → výpočet SHA-256 → odoslanie na MalwareBazaar → výpis výsledku.
-3. **quarantine** → ukončenie procesov súboru → presun do karantény s jedinečným menom → nastavenie len na čítanie.
-4. **quarantine-list** → výpis súborov v karanténe.
-5. **quarantine-clear** → potvrdenie → zmena oprávnení a vymazanie všetkých súborov v karanténe.
-
-Tým máš kompletný prehľad o tom, ako PyGuard funguje a ako je kód štruktúrovaný.
+PyGuard je učebný projekt ktorý ukazuje ako funguje základná detekcia malvéru pomocou hashov. Nie je to náhrada za skutočný antivírus, ale je to dobrý spôsob ako pochopiť princípy na ktorých antivírusy fungujú.

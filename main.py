@@ -14,18 +14,26 @@ load_dotenv()  # načíta ABUSE_CH_API_KEY z .env (súbor nie je v gite)
 # Karanténa: priečinok pre nebezpečné súbory (možno prepísať v .env ako QUARANTINE_PATH)
 _QUARANTINE_DEFAULT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "PyGuard_Quarantine")
 
-WELCOME_SCREEN = r"""
-  _____ __     _______ _    _         _____  _____  
- |  __ \\ \   / / ____| |  | |  /\   |  __ \|  __ \ 
- | |__) |\ \_/ / |  __| |  | | /  \  | |__) | |  | |
- |  ___/  \   /| | |_ | |  | |/ /\ \ |  _  /| |  | |
- | |       | | | |__| | |__| / ____ \| | \ \| |__| |
- |_|       |_|  \_____|\____/_/    \_\_|  \_\_____/ 
+def get_welcome_screen():
+    """Vráti farebný uvítací banner."""
+    logo_lines = [
+        r"  _____ __     _______ _    _         _____  _____  ",
+        r" |  __ \\ \   / / ____| |  | |  /\   |  __ \|  __ \ ",
+        r" | |__) |\ \_/ / |  __| |  | | /  \  | |__) | |  | |",
+        r" |  ___/  \   /| | |_ | |  | |/ /\ \ |  _  /| |  | |",
+        r" | |       | | | |__| | |__| / ____ \| | \ \| |__| |",
+        r" |_|       |_|  \_____|\____/_/    \_\_|  \_\_____/ ",
+    ]
+    lines = []
+    for line in logo_lines:
+        lines.append(click.style(line, fg='cyan'))
+    lines.append("")
+    lines.append(click.style(" >>> PYGUARD: Python Security & Antivirus Mentor", fg='green'))
+    lines.append(click.style(" >>> Status: Active | Version: 1.0.0", fg='yellow'))
+    lines.append(click.style(" ---------------------------------------------------", fg='bright_black'))
+    return "\n".join(lines)
 
- >>> PYGUARD: Python Security & Antivirus Mentor
- >>> Status: Active | Version: 1.0.0
- ---------------------------------------------------
-"""
+WELCOME_SCREEN = None  # bude nastavené pri štarte
 
 def calculate_sha256(filepath):
     """Calculate the SHA-256 hash of a file."""
@@ -131,7 +139,7 @@ def move_to_quarantine(filepath):
         return False
 
 
-@shell.shell(prompt='PyGuard > ', intro=WELCOME_SCREEN)
+@shell.shell(prompt='PyGuard > ', intro='')
 def cli():
     # Táto funkcia musí byť prázdna, slúži len ako vstup do shellu
     pass
@@ -142,10 +150,16 @@ def scanf(filepath):
     """Scan a file for potential threats (SHA-256 vs. MalwareBazaar)."""
     click.echo(f"🔍 Skenujem súbor: {filepath}")
 
-    sha256 = calculate_sha256(filepath)
+    with click.progressbar(length=100, label='Výpočet SHA-256', show_percent=False) as bar:
+        sha256 = calculate_sha256(filepath)
+        bar.update(100)
+    
     if sha256 is None:
         return
 
+    click.echo(f"📋 SHA-256: {sha256}")
+    click.echo("🔄 Kontrolujem v databáze MalwareBazaar...")
+    
     result = check_hash_malwarebazaar(sha256)
     if result is None:
         return  # chýba API kľúč alebo chyba sieťe
@@ -193,18 +207,19 @@ def scand(dirpath, recursive, no_recursive):
     click.echo(f"   Nájdených súborov: {len(files_to_scan)}")
     threats = []
 
-    for path in files_to_scan:
-        sha256 = calculate_sha256(path)
-        if sha256 is None:
-            continue
-        result = check_hash_malwarebazaar(sha256)
-        if result is None:
-            continue
-        if result:
-            tag = result[0].get("tags", ["?"])[0] if result[0].get("tags") else "?"
-            click.echo(f"🚨 VÝSTRAHA: {path}")
-            click.echo(f"   SHA-256: {sha256}  → Tag: {tag}")
-            threats.append(path)
+    with click.progressbar(files_to_scan, label='Skenovanie', show_pos=True, show_percent=True) as bar:
+        for path in bar:
+            sha256 = calculate_sha256(path)
+            if sha256 is None:
+                continue
+            result = check_hash_malwarebazaar(sha256)
+            if result is None:
+                continue
+            if result:
+                tag = result[0].get("tags", ["?"])[0] if result[0].get("tags") else "?"
+                click.echo(f"\n🚨 VÝSTRAHA: {path}")
+                click.echo(f"   SHA-256: {sha256}  → Tag: {tag}")
+                threats.append(path)
 
     click.echo("")
     click.echo(f"📊 Skenované: {len(files_to_scan)} súborov  |  Nájdené hrozby: {len(threats)}")
@@ -260,4 +275,5 @@ def quarantine_clear():
     click.echo("✅ Karanténa vymazaná.")
 
 if __name__ == '__main__':
+    click.echo(get_welcome_screen())
     cli()
